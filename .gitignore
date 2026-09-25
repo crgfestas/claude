@@ -1,2 +1,4 @@
 saida/
 __pycache__/
+*.env
+!referencias/credenciais-modelo.env

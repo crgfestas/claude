@@ -7,7 +7,7 @@ referencias/formato-entrada.md.
 
 Uso:
     python margem_contribuicao.py vendas.csv [--anterior vendas_mes_anterior.csv]
-        [--custos custos.csv] [--mc-minima 15] [--saida pasta/]
+        [--custos custos.csv] [--mc-alvo 30] [--mc-minima 15] [--saida pasta/]
 
 Só biblioteca padrão. Não faz correção de unidade do Lexos: o custo que entra
 aqui já tem de estar em reais por unidade vendida.
@@ -97,7 +97,7 @@ def custo_valido(it):
     return CMV_MIN <= pct <= CMV_MAX, True
 
 
-def indicadores(a):
+def indicadores(a, alvo=0.30):
     rb = a["receita_bruta"]
     rc = a["receita_c_custo"]
     ped = len(a["pedidos"])
@@ -121,7 +121,46 @@ def indicadores(a):
         "mc_pct": mc / rc if rc else None,
         "mc_pos": mc_pos if rc else None,
         "mc_pos_pct": mc_pos / rc if rc else None,
+        # quanto falta (R$) para a MC pós-ads chegar na meta, sobre a receita com custo
+        "gap_alvo": (alvo * rc - mc_pos) if rc else None,
+        "preco_alvo_fator": preco_alvo_fator(a, alvo),
     }
+
+
+def preco_alvo_fator(a, alvo):
+    """Fator a aplicar no preço médio para a MC chegar na meta.
+
+    Taxas do canal e ads escalam com o preço (percentuais); CMV, frete e
+    devolução ficam fixos por unidade. p' = fixos / (1 − taxa% − ads% − alvo).
+    """
+    rc = a["receita_c_custo"]
+    if not rc:
+        return None
+    var_pct = (a["taxa_c_custo"] / rc) + (a["ads"] + a["imposto"]) / a["receita_bruta"]
+    fixos = a["cmv"] + a["frete_c_custo"] + a["dev_c_custo"]
+    den = 1 - var_pct - alvo
+    if den <= 0:
+        return float("inf")  # meta inviável no canal com essas taxas
+    return (fixos / den) / rc
+
+
+def veredito(i, alvo, minima):
+    m = i["mc_pos_pct"]
+    if m is None:
+        return "⚪ sem custo"
+    if m >= alvo:
+        return "🟢 na meta"
+    if m >= minima:
+        return "🟡 abaixo da meta"
+    return "🔴 estancar"
+
+
+def ajuste(fator):
+    if fator is None:
+        return "—"
+    if fator == float("inf"):
+        return "inviável"
+    return ("+" if fator >= 1 else "") + pct(fator - 1)
 
 
 def brl(v):
@@ -168,11 +207,14 @@ def main():
     p.add_argument("vendas")
     p.add_argument("--anterior")
     p.add_argument("--custos")
+    p.add_argument("--mc-alvo", type=float, default=30.0,
+                   help="MC%% ideal (meta), padrão 30")
     p.add_argument("--mc-minima", type=float, default=15.0,
-                   help="MC%% mínima aceitável por SKU (padrão 15)")
+                   help="abaixo disto a loja/SKU é 🔴 estancar, padrão 15")
     p.add_argument("--saida", default=".")
     args = p.parse_args()
 
+    alvo, minima = args.mc_alvo / 100, args.mc_minima / 100
     custos = ler_custos(args.custos)
     linhas = ler_vendas(args.vendas, custos)
     if not linhas:
@@ -182,32 +224,38 @@ def main():
     ant_canal = {}
     if args.anterior:
         _, pc_ant, _, _, _, _ = processar(ler_vendas(args.anterior, custos))
-        ant_canal = {c: indicadores(a) for c, a in pc_ant.items()}
+        ant_canal = {c: indicadores(a, alvo) for c, a in pc_ant.items()}
 
     out = []
     out.append("## Desempenho e margem por conta\n")
     out.append("| Canal | Conta | Receita bruta | Pedidos | Ticket | Taxa canal | "
                "Frete líq. | Devol. | CMV | **MC** | **MC %** | Ads (ACOS) | "
-               "MC pós-ads/imp. | Cobertura custo |")
-    out.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+               f"MC pós-ads/imp. | Falta p/ {args.mc_alvo:.0f}% | Preço p/ meta | "
+               "Cobertura custo | Veredito |")
+    out.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
     for (canal, conta), a in sorted(por_conta.items(),
                                     key=lambda x: -x[1]["receita_bruta"]):
-        i = indicadores(a)
+        i = indicadores(a, alvo)
         out.append(
             f"| {canal} | {conta} | {brl(i['receita_bruta'])} | {i['pedidos']} | "
             f"{brl(i['ticket'])} | {pct(i['taxa_pct'])} | {pct(i['frete_pct'])} | "
             f"{pct(i['dev_pct'])} | {pct(i['cmv_pct'])} | {brl(i['mc'])} | "
             f"**{pct(i['mc_pct'])}** | {brl(i['ads'])} ({pct(i['acos'])}) | "
-            f"{pct(i['mc_pos_pct'])} | {pct(i['cobertura'])} |")
-    it = indicadores(total)
+            f"{pct(i['mc_pos_pct'])} | {brl(max(i['gap_alvo'], 0) if i['gap_alvo'] is not None else None)} | "
+            f"{ajuste(i['preco_alvo_fator'])} | {pct(i['cobertura'])} | {veredito(i, alvo, minima)} |")
+    it = indicadores(total, alvo)
     out.append(
         f"| **Total** | | **{brl(it['receita_bruta'])}** | {it['pedidos']} | "
         f"{brl(it['ticket'])} | {pct(it['taxa_pct'])} | {pct(it['frete_pct'])} | "
         f"{pct(it['dev_pct'])} | {pct(it['cmv_pct'])} | **{brl(it['mc'])}** | "
         f"**{pct(it['mc_pct'])}** | {brl(it['ads'])} ({pct(it['acos'])}) | "
-        f"{pct(it['mc_pos_pct'])} | {pct(it['cobertura'])} |")
+        f"{pct(it['mc_pos_pct'])} | {brl(max(it['gap_alvo'], 0) if it['gap_alvo'] is not None else None)} | "
+        f"{ajuste(it['preco_alvo_fator'])} | {pct(it['cobertura'])} | {veredito(it, alvo, minima)} |")
     out.append("\n_MC = receita − CMV − taxa do canal − frete líquido − devoluções, "
-               "calculada só sobre a receita com custo confiável (coluna Cobertura)._\n")
+               "calculada só sobre a receita com custo confiável (coluna Cobertura). "
+               f"Meta: MC pós-ads ≥ {args.mc_alvo:.0f}%. \"Preço p/ meta\" = ajuste no "
+               "preço médio para chegar na meta, com taxas e ads proporcionais ao preço "
+               "e CMV/frete fixos — estimativa; preço de SKU se decide na precificação._\n")
 
     if ant_canal:
         out.append("## Comparativo por canal com o período anterior\n")
@@ -215,7 +263,7 @@ def main():
                    "MC % | MC % anterior |")
         out.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
         for canal, a in sorted(por_canal.items(), key=lambda x: -x[1]["receita_bruta"]):
-            i, j = indicadores(a), ant_canal.get(canal)
+            i, j = indicadores(a, alvo), ant_canal.get(canal)
             out.append(
                 f"| {canal} | {brl(i['receita_bruta'])} | "
                 f"{var(i['receita_bruta'], j and j['receita_bruta'])} | {i['pedidos']} | "
@@ -226,10 +274,10 @@ def main():
 
     skus = []
     for (canal, sku), a in por_sku.items():
-        i = indicadores(a)
+        i = indicadores(a, alvo)
         if i["mc"] is not None:
             skus.append((canal, sku, a["titulo"], i))
-    abaixo = [s for s in skus if s[3]["mc_pct"] < args.mc_minima / 100]
+    abaixo = [s for s in skus if s[3]["mc_pos_pct"] < alvo]
     abaixo.sort(key=lambda s: s[3]["mc"])
     top = sorted(skus, key=lambda s: -s[3]["mc"])[:10]
 
@@ -238,16 +286,21 @@ def main():
         if not lista:
             out.append("Nenhum.\n")
             return
-        out.append("| Canal | SKU | Produto | Receita | Unid. | CMV % | Taxa % | MC | MC % |")
-        out.append("|---|---|---|---:|---:|---:|---:|---:|---:|")
+        out.append("| Canal | SKU | Produto | Receita | Unid. | Preço médio | CMV % | "
+                   "Taxa % | MC | MC % | Preço p/ meta | Ajuste |")
+        out.append("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for canal, sku, tit, i in lista:
+            pm = i["receita_bruta"] / i["unidades"] if i["unidades"] else None
+            fat = i["preco_alvo_fator"]
+            pa = pm * fat if pm and fat not in (None, float("inf")) else None
             out.append(f"| {canal} | {sku} | {tit[:50]} | {brl(i['receita_bruta'])} | "
-                       f"{i['unidades']:.0f} | {pct(i['cmv_pct'])} | {pct(i['taxa_pct'])} | "
-                       f"{brl(i['mc'])} | {pct(i['mc_pct'])} |")
+                       f"{i['unidades']:.0f} | {brl(pm)} | {pct(i['cmv_pct'])} | "
+                       f"{pct(i['taxa_pct'])} | {brl(i['mc'])} | {pct(i['mc_pct'])} | "
+                       f"{brl(pa) if fat != float('inf') else 'inviável'} | {ajuste(fat)} |")
         out.append("")
 
     tabela_sku("Top 10 SKUs por margem de contribuição (R$)", top)
-    tabela_sku(f"SKUs abaixo da MC mínima ({args.mc_minima:.0f}%) — piores primeiro",
+    tabela_sku(f"SKUs abaixo da meta de MC {args.mc_alvo:.0f}% — piores primeiro",
                abaixo[:25])
 
     for titulo, dic in (("SKUs sem custo (fora da MC)", sem_custo),
@@ -271,12 +324,15 @@ def main():
     with open(csv_sku, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["canal", "sku", "titulo", "receita_bruta", "unidades", "cmv_pct",
-                    "taxa_pct", "frete_pct", "mc", "mc_pct"])
+                    "taxa_pct", "frete_pct", "mc", "mc_pct", "mc_pos_pct",
+                    "fator_preco_meta"])
         for canal, sku, tit, i in sorted(skus, key=lambda s: s[3]["mc"]):
             w.writerow([canal, sku, tit, f"{i['receita_bruta']:.2f}",
                         f"{i['unidades']:.0f}", f"{i['cmv_pct']:.4f}",
                         f"{i['taxa_pct']:.4f}", f"{i['frete_pct']:.4f}",
-                        f"{i['mc']:.2f}", f"{i['mc_pct']:.4f}"])
+                        f"{i['mc']:.2f}", f"{i['mc_pct']:.4f}", f"{i['mc_pos_pct']:.4f}",
+                        "inviavel" if i["preco_alvo_fator"] == float("inf")
+                        else f"{i['preco_alvo_fator']:.4f}"])
     print("\n".join(out))
     print(f"\nGravado: {md} e {csv_sku}", file=sys.stderr)
 

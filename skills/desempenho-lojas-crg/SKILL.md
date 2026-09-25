@@ -11,6 +11,9 @@ Uma vez por mês (e sob demanda), olhar **cada loja** dos cinco marketplaces e r
 2. **Quanto sobra de cada venda?** Margem de contribuição por loja e por SKU.
 3. **O que fazer em cada loja?** No máximo 3 ideias por loja, cada uma presa a um número desta rodada.
 
+**Meta: margem de contribuição ideal de 30%** (MC pós-ads). Veredito por loja e por SKU:
+🟢 **na meta** (≥ 30%) · 🟡 **abaixo da meta** (15–30%) · 🔴 **estancar** (< 15% ou negativa).
+
 Lojas cobertas: **Mercado Livre** (CRGFESTAS, CRGFESTAS2, ML Full), **Shopee** (conta 1 e conta 2 / Full Shopee), **Amazon** (FBA e FBM), **Shein**, **TikTok Shop**. Magalu e loja física ficam de fora — estão no `dre-mensal-crg`.
 
 > **Relação com as outras skills.** O `dre-mensal-crg` fecha o resultado da empresa inteira (estrutura, impostos, dívida). Esta aqui para na **margem de contribuição** e olha loja a loja e SKU a SKU para decidir ação. Ideia de preço de SKU específico → encaminhe para `precificacao`. Anúncio fraco → `kit-anuncio-mercado-livre`. As regras de relatório e de custo do Lexos são as mesmas do DRE: **leia a seção de armadilhas do `dre-mensal-crg` antes de começar.**
@@ -19,7 +22,7 @@ Lojas cobertas: **Mercado Livre** (CRGFESTAS, CRGFESTAS2, ML Full), **Shopee** (
 
 1. O cofre fica em `Desktop\Segundo Celebro\Segundo Celebro`. Sem a pasta conectada, avise e pare.
 2. Leia `CLAUDE.md`, `Contexto - CRG Festas.md`, o DRE mais recente em `02 - Áreas/Financeiro/` e a rodada anterior desta rotina em `02 - Áreas/Financeiro/Desempenho das lojas/`.
-3. Peça acesso a `~/Downloads` (relatórios baixados) e a `~/Desktop/Segundo Celebro` (chave do Lexos).
+3. Peça acesso a `~/Desktop/Segundo Celebro` (chave do Lexos e `credenciais-api.env`) e a `~/Downloads` (relatórios, só para o que a API não cobrir).
 4. Defina o período. Padrão: **mês fechado anterior**, rodando **a partir do dia 20** (antes disso a conciliação da Shopee vem truncada). Pedido fora dessa janela = **prévia**: use os painéis de GMV, marque a nota como `prévia` e não calcule MC de canal com repasse incompleto.
 5. Arquivos da rodada em `99 - Anexos/Desempenho/AAAA-MM/`. Crie a pasta se não existir.
 
@@ -60,18 +63,37 @@ Receita bruta (produto, sem o frete pago pelo comprador)
 
 ## Passo a passo
 
-1. **Baixe os relatórios financeiros** de cada loja (tabela em `referencias/formato-entrada.md`). Só relatório com taxa por pedido serve para MC; painel de GMV serve só para a parte 1.
-2. **Monte um CSV normalizado** por período — `99 - Anexos/Desempenho/AAAA-MM/vendas.csv` — no formato de `referencias/formato-entrada.md`. Uma linha por pedido-item.
-3. **Custo:** reaproveite `99 - Anexos/DRE/CMV medido por SKU - Lexos.csv` e o cache `99 - Anexos/DRE/_cache/catalogo-lexos.json`. SKU que não estiver lá: API do Lexos, casamento por nome com `fuzz.ratio` ≥ 90, **regra de unidade centavos × reais**. Sem teste que feche → sem custo. Grave em `custos.csv` (`sku,custo_unit`).
-4. **Rode o script:**
+1. **Colete pela API** — é o caminho padrão:
+
+   ```
+   python scripts/coletar_api.py --de AAAA-MM-01 --ate AAAA-MM-último \
+       --credenciais "~/Desktop/Segundo Celebro/credenciais-api.env" \
+       --saida "99 - Anexos/Desempenho/AAAA-MM"
+   ```
+
+   | Canal | API | O que traz |
+   |---|---|---|
+   | Mercado Livre | API oficial (`/orders/search`, `/shipments/{id}/costs`) | pedido, SKU, preço, tarifa de venda, frete do vendedor — todas as contas em `ML_CONTAS` |
+   | Shopee | Open Platform v2 (`get_order_list`, `get_escrow_detail`) | repasse por pedido: comissão, taxa de serviço, afiliado, frete; pedido ainda não liquidado fica fora da MC e é contado no log |
+   | Amazon | SP-API Finances (`financialEvents`) | venda, comissão, FBA, reembolsos e Sponsored Products — **por data de lançamento financeiro** |
+   | TikTok Shop | Partner API 202309 (pedidos + `statement_transactions`) | **beta**: na primeira rodada confira `bruto/tiktok-extratos.json` contra o extrato do painel |
+   | Shein | não tem API aberta ao vendedor | relatório de repasse, acrescentado ao `vendas.csv` à mão |
+   | Custo | API do Lexos (`/Catalogo/ObterProdutoSku`) | custo com a regra de unidade centavos × reais já aplicada → `custos.csv` |
+
+   Leia `coleta.log`. Canal com "credenciais ausentes" ou "FALHOU" → **não obtido** na nota; aí, e só aí, caia para o relatório exportado (`referencias/formato-entrada.md`). O modelo das credenciais está em `referencias/credenciais-modelo.env`. **Nunca mostre o conteúdo desse arquivo.**
+
+   Se a sessão tiver as ferramentas do Mercado Livre (`resumo_vendas`, `minha_conta`, `listar_meus_anuncios`), use-as para a parte 1 (saúde) e para conferir o faturamento que o coletor trouxe.
+2. **Ads que a API não trouxe** (Mercado Ads, Shopee Ads, TikTok Ads): acrescente uma linha `sku=ADS` por conta no `vendas.csv` com o valor do painel.
+3. **Custo que o Lexos não confirmou:** tente `99 - Anexos/DRE/CMV medido por SKU - Lexos.csv`. Sem teste que feche → sem custo.
+4. **Rode o cálculo:**
 
    ```
    python scripts/margem_contribuicao.py vendas.csv --custos custos.csv \
-       --anterior ../AAAA-MM-anterior/vendas.csv --mc-minima <mínimo do cofre> \
-       --saida 99 - Anexos/Desempenho/AAAA-MM/
+       --anterior ../AAAA-MM-anterior/vendas.csv --mc-alvo 30 --mc-minima 15 \
+       --saida "99 - Anexos/Desempenho/AAAA-MM"
    ```
 
-   Ele gera `margem_contribuicao.md` (tabelas prontas para a nota) e `margem_por_sku.csv`. A MC mínima vem do cofre; se não houver registro, use 15% e diga que é padrão.
+   Gera `margem_contribuicao.md` e `margem_por_sku.csv`, com, por loja e por SKU: MC pós-ads, **quanto falta em R$ para 30%**, **ajuste de preço estimado para chegar em 30%** e o veredito.
 5. **Confira antes de acreditar:**
    - **Cobertura de custo** abaixo de 70% da receita numa loja → a MC daquela loja é indicativa; diga isso na tabela.
    - CMV da loja muito fora de 35–40% (referência medida set/2026) → desconfie do cruzamento de custo antes do número.
@@ -89,6 +111,7 @@ Use o cardápio de `referencias/alavancas-por-canal.md`. Regras:
 - **No máximo 3 ideias por loja**, em ordem de impacto em R$ de margem.
 - **Cada ideia cita o número que a disparou** (ex.: "MC pós-ads de 4% com ACOS de 18% no SKU X"). Ideia genérica ("melhorar fotos") sem gatilho não entra.
 - Estime o ganho quando der: "se a taxa de afiliado desse SKU cair de 15% para 8%, a MC sobe ~R$ 1.200/mês". Diga que é estimativa.
+- Loja 🟡 ou 🔴: a primeira ideia diz **como fechar o "Falta p/ 30%"** — somando alavancas (taxa, frete, ads, kit, preço) até cobrir o valor. Aumento de preço acima de ~10% num SKU raramente é viável sozinho: diga isso e combine com outra alavanca.
 - Saúde da conta em risco (reputação caindo, penalidade, ODR alto) vem **antes** de qualquer ideia de margem naquela loja.
 - Loja com MC pós-ads negativa → ideia nº 1 é estancar (pausar ads no SKU, subir preço, tirar SKU do canal).
 
@@ -106,13 +129,14 @@ status: fechado | prévia
 atualizado: AAAA-MM-DD
 lojas_com_mc: []
 lojas_sem_relatorio: []
+mc_alvo: 30
 tags: [financeiro, marketplace, desempenho]
 ---
 # Desempenho das lojas — mês/AAAA
 
 ## Resumo
-| Loja | Conta | Receita | Var. mês ant. | Saúde | MC % | MC pós-ads % | Veredito |
-<!-- veredito: 🟢 crescer · 🟡 ajustar · 🔴 estancar -->
+| Loja | Conta | Receita | Var. mês ant. | Saúde | MC % | MC pós-ads % | Falta p/ 30% | Veredito |
+<!-- veredito: 🟢 na meta (≥30%) · 🟡 abaixo da meta (15–30%) · 🔴 estancar (<15%) -->
 
 ## Saúde das contas
 | Loja | Conta | Indicador | Agora | Anterior | Situação |
@@ -123,7 +147,7 @@ tags: [financeiro, marketplace, desempenho]
 ## Comparativo com o mês anterior
 
 ## SKUs que mais geram margem
-## SKUs abaixo da MC mínima
+## SKUs abaixo da meta de 30% (com preço para a meta)
 ## SKUs sem custo ou com custo suspeito
 
 ## Ideias de melhoria
@@ -151,7 +175,8 @@ tags: [financeiro, marketplace, desempenho]
 
 - **Nunca invente número.** Loja sem relatório é "não enviado"/"não obtido", nunca zero.
 - **Nunca use custo cru do Lexos** sem a regra de unidade; nunca baixe o corte de 90 no casamento de nome.
-- **Nunca altere preço, anúncio, campanha de ads ou comissão de afiliado.** Esta rotina recomenda; quem executa é o Leandro.
+- **Nunca altere preço, anúncio, campanha de ads ou comissão de afiliado.** As APIs são usadas só para leitura. Esta rotina recomenda; quem executa é o Leandro.
+- Nunca exiba nem copie para a nota o conteúdo de `credenciais-api.env`.
 - Valores de painel são brutos — antes de taxa, frete e imposto. Diga isso sempre que mostrar faturamento de painel.
 - Nunca exponha a chave da API do Lexos no chat nem em arquivo do cofre.
 - Nunca apague nota do Leandro — no máximo mova para `04 - Arquivo/`.
@@ -159,4 +184,4 @@ tags: [financeiro, marketplace, desempenho]
 
 # Ao final
 
-Responda em até 8 linhas: receita total das cinco lojas, a loja com maior e a com menor MC pós-ads (com o %), a conta com saúde em risco (se houver), a ideia de maior ganho estimado, lojas que ficaram sem relatório, e onde ficou a nota.
+Responda em até 8 linhas: receita total das cinco lojas, a MC pós-ads total contra a meta de 30% (e quanto falta em R$), a loja com maior e a com menor MC pós-ads (com o %), a conta com saúde em risco (se houver), a ideia de maior ganho estimado, lojas que ficaram sem relatório, e onde ficou a nota.
