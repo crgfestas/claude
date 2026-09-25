@@ -1,0 +1,13 @@
+canal,conta,pedido,sku,titulo,unidades,receita_bruta,comissao,taxa_servico,afiliados,frete_vendedor,frete_recebido,devolucao,ads,status,custo_unit
+Mercado Livre,CRGFESTAS,ML1,KIT300,Kit Descartáveis 300 Peças,2,179.80,25.17,12.00,0,22.90,0,0,0,,
+Mercado Livre,CRGFESTAS,ML2,BAL50,Balão Nº9 50un,3,59.70,8.36,18.00,0,0,0,0,0,,
+Mercado Livre,CRGFESTAS,ML3,KIT300,Kit Descartáveis 300 Peças,1,89.90,12.59,6.00,0,22.90,0,0,0,,
+Mercado Livre,CRGFESTAS,ADS,ADS,Mercado Ads,0,0,0,0,0,0,0,0,25.00,,
+Shopee,Shopee 1,SH1,KIT300,Kit Descartáveis 300 Peças,3,254.70,35.66,12.00,15.28,0,0,0,0,,
+Shopee,Shopee 1,SH2,VELA10,Vela Número Dourada,4,39.60,5.54,12.00,2.38,0,0,0,0,,
+Shopee,Shopee 2,SH3,BAL50,Balão Nº9 50un,5,94.50,13.23,20.00,0,0,0,18.90,0,,
+Shopee,Shopee 1,SH4,BAL50,Balão Nº9 50un,1,18.90,2.65,4.00,0,0,0,0,0,cancelado,
+Amazon,Amazon FBA,AZ1,KIT300,Kit Descartáveis 300 Peças,2,189.80,22.78,0,0,31.40,0,0,12.00,,
+TikTok Shop,TikTok,TT1,KIT300,Kit Descartáveis 300 Peças,1,84.90,5.09,1.70,12.74,9.90,0,0,0,,
+TikTok Shop,TikTok,TT2,TOPO1,Topo de Bolo Personalizado,2,49.80,2.99,0.60,7.47,0,0,0,0,,
+Shein,Shein,SE1,VELA10,Vela Número Dourada,2,21.80,3.49,0,0,0,0,0,0,,
